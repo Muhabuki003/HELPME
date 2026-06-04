@@ -1,0 +1,35 @@
+{
+  "name": "studybuddy-widget",
+  "version": "1.0.0",
+  "description": "A persistent always-on-top floating AI study widget. Records your screen for learning context and answers homework questions via the DeepSeek API.",
+  "main": "main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.studybuddy.widget",
+    "productName": "StudyBuddy",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "assets/**/*"
+    ],
+    "mac": { "category": "public.app-category.education", "target": ["dmg", "zip"] },
+    "win": { "target": ["nsis", "portable"] },
+    "linux": { "target": ["AppImage", "deb"], "category": "Education" }
+  },
+  "dependencies": {
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
