@@ -1,8 +1,20 @@
 'use strict';
 
-/* StudyBuddy renderer — UI, screen-capture/OCR pipeline, and DeepSeek chat. */
+/* StudyBuddy renderer.
+ *
+ * Runs in two environments:
+ *   1. The Electron desktop build — privileged APIs are exposed on
+ *      window.studybuddy by preload.js (true OS-level always-on-top widget).
+ *   2. A plain browser tab (e.g. hosted on Cloudflare Pages) — falls back to
+ *      web-native equivalents: getDisplayMedia for capture, localStorage for
+ *      persistence, and Document Picture-in-Picture for an always-on-top window.
+ */
 
-const api = window.studybuddy;
+const bridge = window.studybuddy || null;
+const isElectron = !!bridge;
+
+// Give the page a solid backdrop when running as a hosted web app.
+if (!isElectron) document.documentElement.classList.add('web');
 
 // ----------------------------- DOM handles ---------------------------------
 const $ = (id) => document.getElementById(id);
@@ -10,6 +22,7 @@ const orb = $('orb');
 const panel = $('panel');
 const recDot = $('recDot');
 const recordBtn = $('recordBtn');
+const popoutBtn = $('popoutBtn');
 const settingsBtn = $('settingsBtn');
 const collapseBtn = $('collapseBtn');
 const settingsBox = $('settings');
@@ -24,39 +37,111 @@ const memCountEl = $('memCount');
 const clearMemBtn = $('clearMem');
 const saveSettingsBtn = $('saveSettings');
 
+// ------------------------- Storage abstraction -----------------------------
+// In the browser we persist to localStorage; in Electron to the JSON store.
+const LS_SETTINGS = 'studybuddy:settings';
+const LS_HISTORY = 'studybuddy:history';
+
+const store = isElectron
+  ? {
+      getSettings: () => bridge.getSettings(),
+      setSettings: (s) => bridge.setSettings(s),
+      getHistory: () => bridge.getHistory(),
+      addHistory: (e) => bridge.addHistory(e),
+      clearHistory: () => bridge.clearHistory(),
+    }
+  : {
+      getSettings: async () => readLS(LS_SETTINGS, {}),
+      setSettings: async (s) => {
+        const merged = { ...readLS(LS_SETTINGS, {}), ...s };
+        writeLS(LS_SETTINGS, merged);
+        return merged;
+      },
+      getHistory: async () => readLS(LS_HISTORY, []),
+      addHistory: async (entry) => {
+        const list = readLS(LS_HISTORY, []);
+        const item = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), ...entry };
+        list.push(item);
+        writeLS(LS_HISTORY, list.slice(-400));
+        return item;
+      },
+      clearHistory: async () => {
+        writeLS(LS_HISTORY, []);
+        return true;
+      },
+    };
+
+function readLS(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeLS(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.error('localStorage write failed:', err);
+  }
+}
+
 // ------------------------------- State -------------------------------------
 let settings = { apiKey: '', model: 'deepseek-chat', captureIntervalSec: 6 };
-let history = []; // captured screen snippets {id, time, text}
-let conversation = []; // chat turns {role, content}
+let history = [];
+let conversation = [];
 let recording = false;
 let captureTimer = null;
 let lastCaptureText = '';
 let ocrWorker = null;
 let busy = false;
 
+// Browser-only capture stream (persistent so it prompts once per session).
+let displayStream = null;
+let captureVideo = null;
+
+// Document Picture-in-Picture window (browser always-on-top).
+let pipWindow = null;
+
 // --------------------------- Initialisation --------------------------------
 (async function init() {
-  settings = (await api.getSettings()) || settings;
-  history = (await api.getHistory()) || [];
+  settings = { ...settings, ...((await store.getSettings()) || {}) };
+  history = (await store.getHistory()) || [];
   apiKeyEl.value = settings.apiKey || '';
   modelEl.value = settings.model || 'deepseek-chat';
   intervalEl.value = settings.captureIntervalSec || 6;
   refreshMemCount();
+
+  // Show the pop-out button only when the browser supports Document PiP and
+  // we're not already inside the privileged Electron window.
+  if (!isElectron && 'documentPictureInPicture' in window) {
+    popoutBtn.hidden = false;
+  }
+  setStatus(
+    history.length
+      ? `${history.length} snippet${history.length === 1 ? '' : 's'} in memory`
+      : 'Ready to help with homework'
+  );
 })();
 
 function refreshMemCount() {
   memCountEl.textContent = `${history.length} snippet${history.length === 1 ? '' : 's'} remembered`;
 }
 
+function setStatus(text) {
+  statusLine.textContent = text;
+}
+
 // ---------------------- Expand / collapse the widget ------------------------
 async function expand() {
-  await api.setExpanded(true);
+  if (isElectron) await bridge.setExpanded(true);
   orb.hidden = true;
   panel.hidden = false;
   inputEl.focus();
 }
 async function collapse() {
-  await api.setExpanded(false);
+  if (isElectron) await bridge.setExpanded(false);
   panel.hidden = true;
   orb.hidden = false;
   settingsBox.hidden = true;
@@ -69,7 +154,7 @@ settingsBtn.addEventListener('click', () => {
 });
 
 saveSettingsBtn.addEventListener('click', async () => {
-  settings = await api.setSettings({
+  settings = await store.setSettings({
     apiKey: apiKeyEl.value.trim(),
     model: modelEl.value,
     captureIntervalSec: Math.min(60, Math.max(2, Number(intervalEl.value) || 6)),
@@ -79,27 +164,86 @@ saveSettingsBtn.addEventListener('click', async () => {
 });
 
 clearMemBtn.addEventListener('click', async () => {
-  await api.clearHistory();
+  await store.clearHistory();
   history = [];
   lastCaptureText = '';
   refreshMemCount();
   setStatus('Memory cleared');
 });
 
-function setStatus(text) {
-  statusLine.textContent = text;
+// ----------------- Document Picture-in-Picture (browser) -------------------
+// Pops the chat panel into a small OS-level floating window that stays on top
+// of other windows — the web-native way to get an always-on-top widget.
+popoutBtn.addEventListener('click', togglePopout);
+
+async function togglePopout() {
+  if (pipWindow) {
+    pipWindow.close();
+    return;
+  }
+  try {
+    pipWindow = await window.documentPictureInPicture.requestWindow({
+      width: 420,
+      height: 640,
+    });
+
+    // Carry our styles into the PiP document.
+    for (const sheet of document.styleSheets) {
+      try {
+        const rules = [...sheet.cssRules].map((r) => r.cssText).join('\n');
+        const style = pipWindow.document.createElement('style');
+        style.textContent = rules;
+        pipWindow.document.head.appendChild(style);
+      } catch {
+        // Cross-origin sheet — fall back to a <link>.
+        if (sheet.href) {
+          const link = pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = sheet.href;
+          pipWindow.document.head.appendChild(link);
+        }
+      }
+    }
+
+    pipWindow.document.body.classList.add('pip');
+    panel.hidden = false;
+    pipWindow.document.body.appendChild(panel); // move the live node; listeners persist
+    orb.hidden = true;
+    popoutBtn.textContent = '⤡';
+
+    pipWindow.addEventListener('pagehide', () => {
+      document.body.appendChild(panel);
+      pipWindow = null;
+      popoutBtn.textContent = '⧉';
+      panel.hidden = true;
+      orb.hidden = false;
+    });
+  } catch (err) {
+    console.error('Pop-out failed:', err);
+    setStatus('Pop-out not available in this browser');
+  }
 }
 
 // ------------------------- Screen recording / OCR --------------------------
 recordBtn.addEventListener('click', () => (recording ? stopRecording() : startRecording()));
 
-function startRecording() {
+async function startRecording() {
+  // In the browser, acquire the screen share once before we begin the loop.
+  if (!isElectron) {
+    try {
+      await ensureDisplayStream();
+    } catch (err) {
+      console.error('getDisplayMedia failed:', err);
+      setStatus('Screen share was cancelled');
+      return;
+    }
+  }
+
   recording = true;
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹ Stop';
   recDot.hidden = false;
   setStatus('Recording your screen…');
-  // Capture immediately, then on the configured interval.
   captureOnce();
   captureTimer = setInterval(captureOnce, (settings.captureIntervalSec || 6) * 1000);
 }
@@ -111,17 +255,52 @@ function stopRecording() {
   recDot.hidden = true;
   if (captureTimer) clearInterval(captureTimer);
   captureTimer = null;
+  releaseDisplayStream();
   setStatus(`Remembered ${history.length} snippet${history.length === 1 ? '' : 's'}`);
 }
 
-// Lazily create the OCR worker (best effort — works if tesseract.js is present).
+// Browser: open one persistent screen-capture stream for the whole session.
+async function ensureDisplayStream() {
+  if (displayStream) return;
+  displayStream = await navigator.mediaDevices.getDisplayMedia({
+    video: { frameRate: 1 },
+    audio: false,
+  });
+  captureVideo = document.createElement('video');
+  captureVideo.muted = true;
+  captureVideo.srcObject = displayStream;
+  await captureVideo.play();
+  // If the user stops sharing via the browser's own control, stop recording.
+  displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+    if (recording) stopRecording();
+  });
+}
+
+function releaseDisplayStream() {
+  if (displayStream) {
+    displayStream.getTracks().forEach((t) => t.stop());
+  }
+  displayStream = null;
+  captureVideo = null;
+}
+
+// Grab one screenshot as a PNG data URL, regardless of environment.
+async function grabFrame() {
+  if (isElectron) return bridge.captureScreen();
+  if (!captureVideo || !captureVideo.videoWidth) throw new Error('No video frame yet');
+  const canvas = document.createElement('canvas');
+  canvas.width = captureVideo.videoWidth;
+  canvas.height = captureVideo.videoHeight;
+  canvas.getContext('2d').drawImage(captureVideo, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
+}
+
+// Lazily create the OCR worker (best effort).
 async function getOcrWorker() {
   if (ocrWorker) return ocrWorker;
   if (typeof Tesseract === 'undefined') return null;
   try {
-    ocrWorker = await Tesseract.createWorker('eng', 1, {
-      langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-    });
+    ocrWorker = await Tesseract.createWorker('eng');
     return ocrWorker;
   } catch (err) {
     console.error('OCR unavailable:', err);
@@ -131,10 +310,10 @@ async function getOcrWorker() {
 
 async function captureOnce() {
   try {
-    const dataUrl = await api.captureScreen();
+    const dataUrl = await grabFrame();
     const worker = await getOcrWorker();
     if (!worker) {
-      setStatus('OCR unavailable — install dependencies (npm install)');
+      setStatus('OCR engine could not load (check your connection)');
       return;
     }
     const {
@@ -144,13 +323,13 @@ async function captureOnce() {
     if (clean.length < 25) return; // ignore near-empty screens
     if (similar(clean, lastCaptureText)) return; // skip duplicate frames
     lastCaptureText = clean;
-    const entry = await api.addHistory({ time: Date.now(), text: clean.slice(0, 4000) });
+    const entry = await store.addHistory({ time: Date.now(), text: clean.slice(0, 4000) });
     history.push(entry);
     refreshMemCount();
     if (recording) setStatus(`Recording… ${history.length} snippets captured`);
   } catch (err) {
     console.error('capture failed:', err);
-    setStatus('Capture failed — check screen-recording permission');
+    setStatus('Capture failed — try Record again and allow screen sharing');
   }
 }
 
@@ -181,14 +360,12 @@ function buildContext(query) {
     const words = h.text.toLowerCase();
     let score = 0;
     for (const t of terms) if (words.includes(t)) score++;
-    // Light recency bonus so recent material wins ties.
-    score += idx / history.length;
+    score += idx / history.length; // light recency bonus
     return { h, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
 
-  // Top relevant snippets + always include the few most recent ones.
   const picked = new Map();
   for (const s of scored.slice(0, 8)) picked.set(s.h.id, s.h);
   for (const h of history.slice(-4)) picked.set(h.id, h);
@@ -243,12 +420,24 @@ async function send() {
   } catch (err) {
     console.error(err);
     bubble.classList.remove('typing');
-    bubble.textContent = '⚠ ' + (err.message || 'Request failed. Check your API key and network.');
+    bubble.textContent = '⚠ ' + describeError(err);
   } finally {
     busy = false;
     sendBtn.disabled = false;
     scrollToBottom();
   }
+}
+
+function describeError(err) {
+  const msg = err && err.message ? err.message : 'Request failed.';
+  // A bare "Failed to fetch" in the browser usually means CORS/network.
+  if (/failed to fetch/i.test(msg) && !isElectron) {
+    return (
+      'Could not reach the DeepSeek API from the browser. This is usually a CORS/network ' +
+      'block. Check your connection, or route requests through a small proxy (see README).'
+    );
+  }
+  return msg;
 }
 
 const SYSTEM_PROMPT =
@@ -266,7 +455,6 @@ async function streamReply(query, bubble) {
     ? `${SYSTEM_PROMPT}\n\n=== CAPTURED STUDY MATERIAL ===\n${context}\n=== END MATERIAL ===`
     : SYSTEM_PROMPT;
 
-  // Keep the last several turns for continuity without unbounded growth.
   const recentTurns = conversation.slice(-12);
   const messages = [{ role: 'system', content: systemContent }, ...recentTurns];
 
@@ -301,7 +489,7 @@ async function streamReply(query, bubble) {
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // keep the last partial line
+    buffer = lines.pop();
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed.startsWith('data:')) continue;
@@ -344,10 +532,7 @@ function scrollToBottom() {
 
 // Minimal, safe markdown: escape first, then add code blocks / inline / bold.
 function renderMarkdown(text) {
-  const esc = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return esc
     .replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => `<pre><code>${code}</code></pre>`)
     .replace(/`([^`]+)`/g, '<code>$1</code>')

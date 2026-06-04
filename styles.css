@@ -17,6 +17,25 @@
   padding: 0;
 }
 
+/* When hosted in a normal browser tab (not the transparent Electron window),
+   give the page a solid backdrop. */
+html.web,
+html.web body {
+  background: radial-gradient(120% 120% at 80% 90%, #161a26 0%, #0b0d12 60%);
+}
+
+/* Document Picture-in-Picture: the panel fills the floating window. */
+body.pip {
+  background: var(--bg);
+  height: 100vh;
+  overflow: hidden;
+}
+body.pip .panel {
+  inset: 0;
+  border-radius: 0;
+  border: none;
+}
+
 html,
 body {
   width: 100%;

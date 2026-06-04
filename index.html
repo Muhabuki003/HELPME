@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://api.deepseek.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com blob: data:; worker-src 'self' blob:;"
+      content="default-src 'self'; script-src 'self' 'unsafe-eval' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src blob: data: mediastream:; connect-src https://api.deepseek.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com blob: data:; worker-src 'self' blob: https://cdn.jsdelivr.net;"
     />
     <title>StudyBuddy</title>
     <link rel="stylesheet" href="styles.css" />
@@ -29,6 +29,7 @@
         </div>
         <div class="header-actions">
           <button id="recordBtn" class="icon-btn" title="Record screen for context">⏺ Record</button>
+          <button id="popoutBtn" class="icon-btn" title="Pop out into a floating always-on-top window" hidden>⧉</button>
           <button id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
           <button id="collapseBtn" class="icon-btn" title="Collapse">▾</button>
         </div>
@@ -83,8 +84,9 @@
       </footer>
     </section>
 
-    <!-- OCR engine (bundled via npm). If absent, capture degrades gracefully. -->
-    <script src="node_modules/tesseract.js/dist/tesseract.min.js"></script>
+    <!-- OCR engine. Loaded from CDN so it works both in the desktop build and
+         when the page is hosted (e.g. Cloudflare Pages). Degrades gracefully. -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>
