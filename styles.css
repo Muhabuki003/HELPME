@@ -9,41 +9,18 @@
   --user: #2b3350;
   --radius: 16px;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --w: 420px;
+  --h: 640px;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* When hosted in a normal browser tab (not the transparent Electron window),
-   give the page a solid backdrop. */
-html.web,
-html.web body {
-  background: radial-gradient(120% 120% at 80% 90%, #161a26 0%, #0b0d12 60%);
-}
-
-/* Document Picture-in-Picture: the panel fills the floating window. */
-body.pip {
-  background: var(--bg);
-  height: 100vh;
-  overflow: hidden;
-}
-body.pip .panel {
-  inset: 0;
-  border-radius: 0;
-  border: none;
-}
-
-html,
-body {
+html, body {
   width: 100%;
   height: 100%;
-  background: transparent; /* transparent Electron window */
+  background: radial-gradient(ellipse 120% 120% at 80% 110%, #161a2e 0%, #0b0d14 60%);
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--text);
   -webkit-user-select: none;
   user-select: none;
@@ -52,32 +29,32 @@ body {
 /* ----------------------------- Floating orb ----------------------------- */
 .orb {
   position: fixed;
-  right: 14px;
-  bottom: 14px;
+  right: 20px;
+  bottom: 20px;
   width: 64px;
   height: 64px;
   border: none;
   border-radius: 50%;
   cursor: pointer;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), 0 0 0 0 rgba(108,140,255,0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 28px;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  -webkit-app-region: drag; /* the orb itself can drag the window */
+  animation: orbPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 9999;
 }
-.orb:hover {
-  transform: scale(1.06);
+@keyframes orbPop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
 }
-.orb:active {
-  transform: scale(0.96);
-}
-.orb-glyph {
-  pointer-events: none;
-  -webkit-app-region: no-drag;
-}
+.orb:hover { transform: scale(1.06); box-shadow: var(--shadow), 0 0 0 8px rgba(108,140,255,0.15); }
+.orb:active { transform: scale(0.96); }
+
+.orb-glyph { pointer-events: none; }
+
 .rec-dot {
   position: absolute;
   top: 6px;
@@ -90,39 +67,52 @@ body {
   animation: pulse 1.2s infinite;
 }
 @keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
 }
 
 /* ------------------------------- Panel ---------------------------------- */
 .panel {
   position: fixed;
-  inset: 8px;
+  bottom: 20px;
+  right: 20px;
+  width: var(--w);
+  height: var(--h);
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 40px);
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   overflow: hidden;
-  animation: rise 0.16s ease;
+  animation: rise 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 9999;
 }
 @keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
 }
 
+/* Document PiP — fills the tiny floating window */
+body.pip {
+  background: var(--bg);
+  height: 100vh;
+  overflow: hidden;
+}
+body.pip .panel {
+  position: static;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+  animation: none;
+}
+
+/* ----------------------------- Header ----------------------------------- */
 .panel-header {
   display: flex;
   align-items: center;
@@ -130,29 +120,15 @@ body {
   padding: 12px 14px;
   background: var(--bg-soft);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  -webkit-app-region: drag; /* drag the whole widget by its header */
+  cursor: default;
+  flex-shrink: 0;
 }
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.brand-mark {
-  font-size: 22px;
-}
-.brand-title {
-  font-weight: 700;
-  font-size: 14px;
-}
-.brand-sub {
-  font-size: 11px;
-  color: var(--muted);
-}
-.header-actions {
-  display: flex;
-  gap: 6px;
-  -webkit-app-region: no-drag;
-}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { font-size: 22px; }
+.brand-title { font-weight: 700; font-size: 14px; }
+.brand-sub { font-size: 11px; color: var(--muted); }
+.header-actions { display: flex; gap: 6px; }
+
 .icon-btn {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -162,15 +138,10 @@ body {
   font-size: 12px;
   cursor: pointer;
   transition: background 0.12s ease;
+  white-space: nowrap;
 }
-.icon-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-.icon-btn.recording {
-  background: #ff4d5e;
-  border-color: #ff4d5e;
-  color: #fff;
-}
+.icon-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.icon-btn.recording { background: #ff4d5e; border-color: #ff4d5e; color: #fff; }
 
 /* ------------------------------ Settings -------------------------------- */
 .settings {
@@ -180,14 +151,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .field input,
 .field select {
   background: var(--bg-input);
@@ -199,17 +165,9 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
-.settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-}
-.muted {
-  color: var(--muted);
-}
-.link,
-.link-btn {
+.settings-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.muted { color: var(--muted); }
+.link, .link-btn {
   color: var(--accent);
   font-size: 12px;
   text-decoration: none;
@@ -227,6 +185,7 @@ body {
   border-radius: 9px;
   cursor: pointer;
 }
+.primary-btn:hover { opacity: 0.9; }
 
 /* ------------------------------ Messages -------------------------------- */
 .messages {
@@ -239,18 +198,14 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
-.msg {
-  display: flex;
-}
-.msg.user {
-  justify-content: flex-end;
-}
+.msg { display: flex; }
+.msg.user { justify-content: flex-end; }
 .bubble {
   max-width: 84%;
   padding: 10px 13px;
   border-radius: 14px;
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -277,14 +232,8 @@ body {
   overflow-x: auto;
   margin: 6px 0;
 }
-.bubble pre code {
-  background: none;
-  padding: 0;
-}
-.typing {
-  color: var(--muted);
-  font-style: italic;
-}
+.bubble pre code { background: none; padding: 0; }
+.typing { color: var(--muted); font-style: italic; }
 
 /* ------------------------------ Composer -------------------------------- */
 .composer {
@@ -294,6 +243,7 @@ body {
   background: var(--bg-soft);
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   align-items: flex-end;
+  flex-shrink: 0;
 }
 #input {
   flex: 1;
@@ -309,10 +259,7 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
-#input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
+#input:focus { outline: none; border-color: var(--accent); }
 .send-btn {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   border: none;
@@ -323,16 +270,10 @@ body {
   font-size: 16px;
   cursor: pointer;
   flex-shrink: 0;
+  transition: opacity 0.12s;
 }
-.send-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.send-btn:hover { opacity: 0.88; }
+.send-btn:disabled { opacity: 0.4; cursor: default; }
 
-.messages::-webkit-scrollbar {
-  width: 8px;
-}
-.messages::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-}
+.messages::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 6px; }
