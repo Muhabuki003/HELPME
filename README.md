@@ -11,6 +11,10 @@ Everything runs **locally on your machine**. Your API key and captured study
 material are stored on disk in your OS user-data folder and never leave your
 computer except for the chat requests you send to DeepSeek.
 
+> **Runs two ways.** The same code runs as a **desktop app** (Electron — a true
+> OS-level always-on-top widget) **or as a hosted web page** (e.g. Cloudflare
+> Pages). See [Running in the browser](#-running-in-the-browser) below.
+
 ## ✨ Features
 
 - **Floating circular launcher** that stays on top of all windows and apps,
@@ -42,6 +46,48 @@ npm start         # launches the widget
 ### Models
 - `deepseek-chat` — fast, general explanations.
 - `deepseek-reasoner` — slower, stronger step-by-step reasoning for hard problems.
+
+## 🌐 Running in the browser
+
+The widget also works as a plain static site (the files are framework-free), so
+you can host `index.html`, `styles.css`, and `renderer.js` on Cloudflare Pages,
+GitHub Pages, Netlify, etc. In this mode it uses web-native equivalents:
+
+- **Screen capture** → `navigator.mediaDevices.getDisplayMedia()`. Click
+  **⏺ Record** and pick a screen/window to share; it captures one frame on each
+  interval and stops when you press **⏹ Stop**.
+- **Memory & settings** → `localStorage` (stays in your browser).
+- **OCR** → Tesseract loaded from a CDN.
+- **Always-on-top** → click **⧉ Pop out** to move the chat into a
+  [Document Picture-in-Picture](https://developer.chrome.com/docs/web-platform/document-picture-in-picture)
+  window that floats above your other windows (Chrome/Edge 116+).
+
+> A browser **tab** can't itself float over other apps — that's an OS
+> capability. The **Pop out** button (Document PiP) and the **desktop build**
+> are the two ways to get a true always-on-top widget.
+
+### DeepSeek + the browser (CORS)
+Calls go directly to `https://api.deepseek.com`. If your browser blocks this
+with a CORS/network error, route requests through a tiny same-origin proxy. On
+Cloudflare Pages, add `functions/api/deepseek.js`:
+
+```js
+export async function onRequestPost({ request, env }) {
+  const body = await request.text();
+  const res = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+    },
+    body,
+  });
+  return new Response(res.body, { status: res.status, headers: res.headers });
+}
+```
+
+Set `DEEPSEEK_API_KEY` as a Pages secret and change the fetch URL in
+`renderer.js` to `/api/deepseek`. This also keeps your key off the client.
 
 ## 📦 Building a standalone app
 
